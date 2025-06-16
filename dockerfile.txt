@@ -1,0 +1,138 @@
+# Dockerfile para el Sistema de Monitoreo de Red
+FROM python:3.11-slim
+
+# Metadatos
+LABEL maintainer="admin@example.com"
+LABEL description="Sistema de Monitoreo de Red"
+LABEL version="1.0"
+
+# Variables de entorno
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV CONFIG_PATH=/app/config/config.yaml
+ENV DATA_PATH=/app/data
+
+# Crear usuario no-root para seguridad
+RUN groupadd -r netmonitor && useradd -r -g netmonitor -d /app -s /bin/bash netmonitor
+
+# Instalar dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    ping \
+    iputils-ping \
+    net-tools \
+    curl \
+    procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Establecer directorio de trabajo
+WORKDIR /app
+
+# Copiar archivos de dependencias
+COPY requirements.txt .
+COPY requirements-dev.txt .
+
+# Instalar dependencias de Python
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copiar código fuente
+COPY --chown=netmonitor:netmonitor . .
+
+# Crear directorios necesarios
+RUN mkdir -p /app/data /app/config /app/logs /app/reports && \
+    chown -R netmonitor:netmonitor /app
+
+# Configurar permisos
+RUN chmod +x /app/main.py && \
+    chmod +x /app/scripts/*.sh
+
+# Cambiar a usuario no-root
+USER netmonitor
+
+# Exponer puertos
+EXPOSE 8080
+
+# Configurar volúmenes
+VOLUME ["/app/data", "/app/config", "/app/logs", "/app/reports"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8080/health')" || exit 1
+
+# Comando por defecto
+CMD ["python", "main.py", "--config", "/app/config/config.yaml"]
+
+# --- Archivo docker-compose.yml complementario ---
+# version: '3.8'
+# 
+# services:
+#   network-monitor:
+#     build: .
+#     container_name: network-monitor
+#     restart: unless-stopped
+#     
+#     ports:
+#       - "8080:8080"
+#     
+#     volumes:
+#       - ./config:/app/config:ro
+#       - ./data:/app/data
+#       - ./logs:/app/logs
+#       - ./reports:/app/reports
+#     
+#     environment:
+#       - CONFIG_PATH=/app/config/config.yaml
+#       - LOG_LEVEL=INFO
+#       - TZ=America/Mexico_City
+#     
+#     networks:
+#       - monitoring-network
+#     
+#     depends_on:
+#       - database
+#   
+#   database:
+#     image: postgres:15-alpine
+#     container_name: network-monitor-db
+#     restart: unless-stopped
+#     
+#     environment:
+#       POSTGRES_DB: network_monitor
+#       POSTGRES_USER: netmonitor
+#       POSTGRES_PASSWORD: secure_password_here
+#     
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+#     
+#     networks:
+#       - monitoring-network
+#   
+#   web-dashboard:
+#     build:
+#       context: .
+#       dockerfile: Dockerfile.dashboard
+#     container_name: network-monitor-dashboard
+#     restart: unless-stopped
+#     
+#     ports:
+#       - "3000:3000"
+#     
+#     environment:
+#       - API_URL=http://network-monitor:8080
+#       - NODE_ENV=production
+#     
+#     depends_on:
+#       - network-monitor
+#     
+#     networks:
+#       - monitoring-network
+# 
+# networks:
+#   monitoring-network:
+#     driver: bridge
+# 
+# volumes:
+#   postgres_data:
+#     driver: local
